@@ -1,0 +1,52 @@
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+
+# Builds 
+
+dist/
+build/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Local vector database
+/storage/chroma/
+
+
+
+# User-uploaded documents
+/data/uploads/
+
+# Local evaluation outputs
+/data/evaluation/
+
+/data/mock_proposals
+
+# Local temporary files
+*.log
+.DS_Store
+
+# IDE settings
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Local databases and vector database data
+chroma/
+chromadb
+chromadb/
