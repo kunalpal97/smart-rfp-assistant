@@ -1,19 +1,22 @@
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.schemas.question import QuestionRequest
+from app.schemas.response import RFPAnswerResponse
 from app.services.rag import answer_rfp_question
 
+router = APIRouter(
+    prefix="/api/questions",
+    tags=["Questions"],
+)
 
-router = APIRouter(prefix="/api/questions", tags=["Questions"])
 
-
-@router.post("/ask")
-def ask_question(request: QuestionRequest):
-    if not request.question.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="Question cannot be blank.",
-        )
-
-    return answer_rfp_question(request.question)
+@router.post(
+    "/ask",
+    response_model=RFPAnswerResponse,
+)
+def ask_question(payload: QuestionRequest):
+    return answer_rfp_question(
+        payload.question,
+        retrieval_mode="hybrid",
+    )
