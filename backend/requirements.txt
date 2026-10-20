@@ -16,3 +16,4 @@ sentence-transformers
 chromadb
 langchain-groq
 python-dotenv
+pydantic-settings

@@ -1,34 +1,22 @@
 
-
-import os
-from pathlib import Path
-
-from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-load_dotenv(PROJECT_ROOT / ".env")
+from app.core.config import get_settings
 
 
 def get_llm() -> ChatGroq:
-    """Create a Groq chat model client."""
+    """Create a Groq chat model using central configuration."""
 
-    api_key = os.getenv("GROQ_API_KEY")
-    model_name = os.getenv(
-        "GROQ_MODEL",
-        "llama-3.3-70b-versatile",
-    )
+    settings = get_settings()
 
-    if not api_key:
+    if not settings.groq_api_key:
         raise ValueError(
-            "GROQ_API_KEY is missing from the .env file."
+            "GROQ_API_KEY is missing from application configuration."
         )
 
     return ChatGroq(
-        model=model_name,
-        api_key=api_key,
+        model=settings.groq_model,
+        api_key=settings.groq_api_key,
         temperature=0,
         max_retries=2,
     )
