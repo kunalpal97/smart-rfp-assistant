@@ -1,6 +1,6 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.integrations.groq_client import get_llm
+from app.integrations.llm_factory import get_llm
 
 
 NO_EVIDENCE_MESSAGE = (

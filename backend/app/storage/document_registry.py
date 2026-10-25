@@ -1,58 +1,49 @@
 
-import sqlite3
-from contextlib import contextmanager
+"""Document registry repository using SQLAlchemy.
+
+Supports SQLite during local development and PostgreSQL after migration.
+Document metadata is shared across users and managed by admins.
+"""
+
+import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
-from app.core.config import get_settings
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from app.storage.db_engine import engine, get_db_session
+from app.storage.models import Base, Document
+
+logger = logging.getLogger(__name__)
+
+VALID_STATUSES = {"processing", "ready", "failed"}
+VALID_STORAGE_PROVIDERS = {"local", "azure_blob"}
 
 
-def get_database_path() -> Path:
-    """Return the local SQLite registry path."""
-    return get_settings().chroma_dir.parent / "documents.db"
+def _utc_now() -> str:
+    """Return a UTC timestamp compatible with the existing database."""
+    return datetime.now(timezone.utc).isoformat()
 
 
-@contextmanager
-def get_connection():
-    """Create and close a SQLite connection."""
-
-    db_path = get_database_path()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    connection = sqlite3.connect(
-        db_path,
-        timeout=30,
-    )
-    connection.row_factory = sqlite3.Row
-
-    try:
-        yield connection
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
+def _document_to_dict(document: Document) -> dict:
+    """Convert a SQLAlchemy document model to a plain dictionary."""
+    return {
+        column.name: getattr(document, column.name)
+        for column in Document.__table__.columns
+    }
 
 
 def initialize_registry() -> None:
-    """Create the document registry table if needed."""
+    """Ensure the document table exists.
 
-    with get_connection() as connection:
-        connection.execute("""
-            CREATE TABLE IF NOT EXISTS documents (
-                document_id TEXT PRIMARY KEY,
-                filename TEXT NOT NULL,
-                stored_filename TEXT NOT NULL,
-                file_hash TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL
-                    CHECK(status IN ('processing', 'ready', 'failed')),
-                chunk_count INTEGER NOT NULL DEFAULT 0,
-                error_message TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
+    This preserves the existing schema for the transition period.
+    Alembic will manage schema migrations in production.
+    """
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[Document.__table__],
+        checkfirst=True,
+    )
 
 
 def create_document(
@@ -60,34 +51,33 @@ def create_document(
     filename: str,
     stored_filename: str,
     file_hash: str,
+    storage_provider: str = "local",
 ) -> None:
-    """Register a document before processing."""
+    """Register a document with initial processing status."""
 
-    now = datetime.now(timezone.utc).isoformat()
-
-    with get_connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO documents (
-                document_id,
-                filename,
-                stored_filename,
-                file_hash,
-                status,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, 'processing', ?, ?)
-            """,
-            (
-                document_id,
-                filename,
-                stored_filename,
-                file_hash,
-                now,
-                now,
-            ),
+    if storage_provider not in VALID_STORAGE_PROVIDERS:
+        raise ValueError(
+            f"Unsupported storage provider: {storage_provider}"
         )
+
+    now = _utc_now()
+
+    document = Document(
+        document_id=document_id,
+        filename=filename,
+        stored_filename=stored_filename,
+        file_hash=file_hash,
+        status="processing",
+        chunk_count=0,
+        error_message=None,
+        created_at=now,
+        updated_at=now,
+        storage_provider=storage_provider,
+    )
+
+    with get_db_session() as session:
+        session.add(document)
+        session.flush()
 
 
 def update_document_status(
@@ -98,85 +88,107 @@ def update_document_status(
 ) -> None:
     """Update document processing status."""
 
-    now = datetime.now(timezone.utc).isoformat()
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid document status: {status}")
 
-    with get_connection() as connection:
-        connection.execute(
-            """
-            UPDATE documents
-            SET status = ?,
-                chunk_count = ?,
-                error_message = ?,
-                updated_at = ?
-            WHERE document_id = ?
-            """,
-            (
-                status,
-                chunk_count,
-                error_message,
-                now,
-                document_id,
-            ),
-        )
+    if chunk_count < 0:
+        raise ValueError("Chunk count cannot be negative.")
+
+    with get_db_session() as session:
+        document = session.get(Document, document_id)
+
+        if document is None:
+            raise ValueError(
+                f"Document not found: {document_id}"
+            )
+
+        document.status = status
+        document.chunk_count = chunk_count
+        document.error_message = error_message
+        document.updated_at = _utc_now()
 
 
 def find_document_by_hash(file_hash: str) -> dict | None:
-    """Find an existing registered document by its hash."""
+    """Find a document using its SHA256 file hash."""
 
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT * FROM documents WHERE file_hash = ?",
-            (file_hash,),
-        ).fetchone()
+    with get_db_session() as session:
+        document = session.scalar(
+            select(Document).where(
+                Document.file_hash == file_hash
+            )
+        )
 
-    return dict(row) if row else None
-
-
-def list_registered_documents() -> list[dict]:
-    """Return all registered documents."""
-
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT *
-            FROM documents
-            ORDER BY created_at DESC
-            """
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def delete_registered_document(document_id: str) -> None:
-    """Remove a document's registry record."""
-
-    with get_connection() as connection:
-        connection.execute(
-            "DELETE FROM documents WHERE document_id = ?",
-            (document_id,),
+        return (
+            _document_to_dict(document)
+            if document is not None
+            else None
         )
 
 
+def list_registered_documents() -> list[dict]:
+    """Return all registered documents, newest first."""
+
+    with get_db_session() as session:
+        documents = session.scalars(
+            select(Document).order_by(
+                Document.created_at.desc()
+            )
+        ).all()
+
+        return [
+            _document_to_dict(document)
+            for document in documents
+        ]
+
+
+def get_registered_document(document_id: str) -> dict | None:
+    """Find a document using its primary key."""
+
+    with get_db_session() as session:
+        document = session.get(Document, document_id)
+
+        return (
+            _document_to_dict(document)
+            if document is not None
+            else None
+        )
+
+
+def delete_registered_document(document_id: str) -> None:
+    """Delete a document registry entry.
+
+    Missing records are treated as already deleted.
+    """
+
+    with get_db_session() as session:
+        document = session.get(Document, document_id)
+
+        if document is not None:
+            session.delete(document)
 
 
 def import_existing_documents() -> int:
-    """Import existing indexed document metadata into SQLite."""
+    """Import legacy indexed document metadata from ChromaDB.
+
+    Existing registered documents are not overwritten.
+    """
 
     from app.storage.vector_store import get_collection
 
     initialize_registry()
 
-    results = get_collection().get(include=["metadatas"])
+    results = get_collection().get(
+        include=["metadatas"]
+    )
 
-    unique_documents = {}
+    unique_documents: dict[str, dict] = {}
 
-    for metadata in results["metadatas"]:
+    for metadata in results.get("metadatas", []):
         if not metadata:
             continue
 
         document_id = metadata.get("document_id")
 
-        # Older mock proposal chunks may not have document IDs.
         if not document_id:
             continue
 
@@ -185,62 +197,70 @@ def import_existing_documents() -> int:
                 "filename": metadata.get("source_file"),
                 "stored_filename": metadata.get("stored_filename"),
                 "file_hash": metadata.get("file_hash"),
+                "storage_provider": metadata.get(
+                    "storage_provider", "local"
+                ),
                 "chunk_count": 0,
             }
 
         unique_documents[document_id]["chunk_count"] += 1
 
     imported_count = 0
-    now = datetime.now(timezone.utc).isoformat()
 
-    with get_connection() as connection:
-        for document_id, metadata in unique_documents.items():
-            # Skip records without required metadata.
-            if not all([
-                metadata["filename"],
-                metadata["stored_filename"],
-                metadata["file_hash"],
-            ]):
-                continue
+    for document_id, metadata in unique_documents.items():
 
-            cursor = connection.execute(
-                """
-                INSERT OR IGNORE INTO documents (
-                    document_id,
-                    filename,
-                    stored_filename,
-                    file_hash,
-                    status,
-                    chunk_count,
-                    created_at,
-                    updated_at
+        if not all([
+            metadata["filename"],
+            metadata["stored_filename"],
+            metadata["file_hash"],
+        ]):
+            continue
+
+        provider = metadata["storage_provider"]
+
+        if provider not in VALID_STORAGE_PROVIDERS:
+            logger.warning(
+                "Skipping legacy document %s: invalid provider",
+                document_id,
+            )
+            continue
+
+        now = _utc_now()
+
+        try:
+            with get_db_session() as session:
+
+                existing = session.get(
+                    Document, document_id
                 )
-                VALUES (?, ?, ?, ?, 'ready', ?, ?, ?)
-                """,
-                (
-                    document_id,
-                    metadata["filename"],
-                    metadata["stored_filename"],
-                    metadata["file_hash"],
-                    metadata["chunk_count"],
-                    now,
-                    now,
-                ),
+
+                if existing is not None:
+                    continue
+
+                document = Document(
+                    document_id=document_id,
+                    filename=metadata["filename"],
+                    stored_filename=metadata["stored_filename"],
+                    file_hash=metadata["file_hash"],
+                    status="ready",
+                    chunk_count=metadata["chunk_count"],
+                    error_message=None,
+                    created_at=now,
+                    updated_at=now,
+                    storage_provider=provider,
+                )
+
+                session.add(document)
+                session.flush()
+
+            imported_count += 1
+
+        except IntegrityError:
+            # Another record may already have this hash,
+            # or a concurrent import may have inserted it.
+            logger.info(
+                "Skipping already registered legacy document %s",
+                document_id,
             )
 
-            imported_count += cursor.rowcount
-
     return imported_count
-
-
-
-def get_registered_document(document_id: str) -> dict | None:
-    """Find a registered document by its ID."""
-
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT * FROM documents WHERE document_id = ?",
-            (document_id,),
-        ).fetchone()
-
-    return dict(row) if row else None

@@ -1,4 +1,7 @@
 
+
+# This code is when you have to use the local embedding like MiniLM 
+
 from functools import lru_cache
 
 from sentence_transformers import SentenceTransformer

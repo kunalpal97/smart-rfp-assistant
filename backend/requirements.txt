@@ -17,3 +17,8 @@ chromadb
 langchain-groq
 python-dotenv
 pydantic-settings
+PyJWT[crypto]==2.15.1
+azure-search-documents
+azure-core
+azure-identity
+azure-storage-blob
