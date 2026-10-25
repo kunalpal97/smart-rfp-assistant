@@ -1,5 +1,6 @@
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from app.core.permissions import require_admin, require_user
 
 from app.services.document_service import (
     DocumentError,
@@ -15,11 +16,15 @@ router = APIRouter(
 )
 
 
-@router.post("/upload")
-def upload_document(file: UploadFile = File(...)):
-    """Upload and index a historical proposal."""
+@router.post(
+    "/upload",
+    dependencies=[Depends(require_admin)],
+)
+def upload_document(
+    file: UploadFile = File(...),
+):
+    """Upload and index a historical proposal. Admin only."""
 
-    # Read at most 10 MB + 1 byte.
     content = file.file.read(10 * 1024 * 1024 + 1)
 
     try:
@@ -34,16 +39,24 @@ def upload_document(file: UploadFile = File(...)):
         ) from exc
 
 
-@router.get("")
+@router.get(
+    "",
+    dependencies=[Depends(require_user)],
+)
 def list_documents():
-    """List indexed historical proposals."""
+    """List indexed historical proposals. User or Admin."""
 
     return list_documents_service()
 
 
-@router.delete("/{document_id}")
-def delete_document(document_id: str):
-    """Delete a document and its indexed chunks."""
+@router.delete(
+    "/{document_id}",
+    dependencies=[Depends(require_admin)],
+)
+def delete_document(
+    document_id: str,
+):
+    """Delete a document and its indexed chunks. Admin only."""
 
     try:
         return delete_document_service(document_id)

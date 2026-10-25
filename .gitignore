@@ -26,7 +26,8 @@ build/
 /storage/chroma/
 /storage/documents.db
 
-
+database_backups/
+backups
 
 # User-uploaded documents
 /data/uploads/

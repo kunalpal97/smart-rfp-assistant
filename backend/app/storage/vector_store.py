@@ -5,34 +5,47 @@ import chromadb  # type: ignore
 from langchain_core.documents import Document
 from app.core.config import get_settings
 
-from app.integrations.local_embeddings import (
+from app.integrations.embedding_factory import (
     embed_documents,
     embed_query,
 )
 
 
+LOCAL_COLLECTION_NAME = "historical_proposals"
+AZURE_COLLECTION_NAME = "historical_proposals_azure"
 
-COLLECTION_NAME = "historical_proposals"
 
 
 def get_collection():
-    """Open or create our persistent ChromaDB collection."""
+    """Open the collection matching the embedding provider."""
 
-    chroma_path = get_settings().chroma_dir
+    settings = get_settings()
 
-    # Ensure the database directory exists.
+    provider = settings.embedding_provider.strip().lower()
+
+    if provider == "azure_openai":
+        collection_name = AZURE_COLLECTION_NAME
+
+    elif provider == "local":
+        collection_name = LOCAL_COLLECTION_NAME
+
+    else:
+        raise ValueError(
+            f"Unsupported embedding provider: {provider}"
+        )
+
+    chroma_path = settings.chroma_dir
     chroma_path.mkdir(parents=True, exist_ok=True)
 
-    # Initialize the persistent ChromaDB client.
     client = chromadb.PersistentClient(
         path=str(chroma_path)
     )
 
-    # Return the existing collection or create it.
     return client.get_or_create_collection(
-        name=COLLECTION_NAME,
+        name=collection_name,
         metadata={"hnsw:space": "cosine"},
     )
+
 
 
 
@@ -115,3 +128,57 @@ def delete_document_chunks(chunk_ids: list[str]) -> None:
 
     if chunk_ids:
         get_collection().delete(ids=chunk_ids)
+
+
+
+def delete_document_from_all_collections(
+    document_id: str,
+) -> int:
+    """Delete a document's records from all known Chroma collections."""
+
+    settings = get_settings()
+
+    client = chromadb.PersistentClient(
+        path=str(settings.chroma_dir)
+    )
+
+    collection_names = [
+        "historical_proposals",
+        "historical_proposals_azure",
+    ]
+
+    total_deleted = 0
+
+    for collection_name in collection_names:
+        try:
+            collection = client.get_collection(
+                name=collection_name
+            )
+        except chromadb.errors.NotFoundError:
+            continue
+
+        results = collection.get(
+            where={"document_id": document_id}
+        )
+
+        chunk_ids = results["ids"]
+
+        if not chunk_ids:
+            continue
+
+        collection.delete(ids=chunk_ids)
+
+        # Verify that the records were removed.
+        remaining = collection.get(
+            where={"document_id": document_id}
+        )
+
+        if remaining["ids"]:
+            raise RuntimeError(
+                f"Deletion verification failed in {collection_name}"
+            )
+
+        total_deleted += len(chunk_ids)
+
+    return total_deleted
+

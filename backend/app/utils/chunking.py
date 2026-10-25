@@ -4,6 +4,8 @@ from collections import defaultdict
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from app.utils.content_types import detect_content_type
+
 
 def chunk_documents(
     documents: list[Document],
@@ -46,11 +48,18 @@ def chunk_documents(
 
         document_id = chunk.metadata.get("document_id", source)
 
+        # Keep the existing document/page-based chunk identity.
         key = (document_id, str(page))
         counters[key] += 1
 
         chunk.metadata["chunk_id"] = (
             f"{document_id}::page-{page}::chunk-{counters[key]:03d}"
+        )
+
+        # Classify the extracted chunk for indexing and UI metadata.
+        # This is heuristic classification, not structured table parsing.
+        chunk.metadata["content_type"] = detect_content_type(
+            chunk.page_content
         )
 
     return chunks

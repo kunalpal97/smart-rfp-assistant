@@ -19,9 +19,39 @@ class Settings(BaseSettings):
     file_storage_provider: str = "local"
     vector_store_provider: str = "chroma"
 
+    # Optional Azure AI Search indexing during migration
+    azure_search_enabled: bool = False
+
     # Groq configuration
     groq_api_key: str = ""
     groq_model: str = "openai/gpt-oss-120b"
+
+    # Azure OpenAI configuration
+    azure_openai_endpoint: str = ""
+    azure_openai_api_key: str = ""
+    azure_openai_api_version: str = "2024-10-21"
+    azure_openai_chat_deployment: str = ""
+    azure_openai_embedding_deployment: str = ""
+
+    # Microsoft Entra ID authentication
+    entra_tenant_id: str = ""
+    entra_client_id: str = ""
+    entra_api_audience: str = ""
+    entra_required_scope: str = "access_as_user"
+
+    # Azure Document Intelligence configuration
+    azure_document_intelligence_endpoint: str = ""
+    azure_document_intelligence_key: str = ""
+
+
+    # Azure Blob Storage
+    azure_storage_account_name: str = ""
+    azure_storage_container_name: str = "rfp-documents"
+    azure_storage_account_key: str = ""
+
+    # Database configuration
+    database_provider: str = "sqlite"
+    database_url: str = ""
 
     # Local embedding configuration
     local_embedding_model: str = (

@@ -1,0 +1,86 @@
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+
+    <meta
+      name="theme-color"
+      content="#0B1220"
+    />
+
+    <meta
+      name="description"
+      content="ProposIQ is an AI-powered proposal intelligence platform that helps teams analyze documents, retrieve supporting evidence, and generate grounded RFP responses."
+    />
+
+    <meta
+      name="application-name"
+      content="ProposIQ"
+    />
+
+    <meta
+      name="color-scheme"
+      content="light dark"
+    />
+
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="/favicon.svg"
+    />
+
+    <title>ProposIQ | Proposal Intelligence</title>
+
+    <script>
+      (() => {
+        try {
+          const savedTheme = localStorage.getItem(
+            "proposiq-theme"
+          );
+
+          const prefersDark = window.matchMedia(
+            "(prefers-color-scheme: dark)"
+          ).matches;
+
+          const isDark =
+            savedTheme === "dark" ||
+            (savedTheme !== "light" && prefersDark);
+
+          document.documentElement.classList.toggle(
+            "dark",
+            isDark
+          );
+
+          document.documentElement.style.colorScheme =
+            isDark ? "dark" : "light";
+
+          const themeColor = document.querySelector(
+            'meta[name="theme-color"]'
+          );
+
+          themeColor?.setAttribute(
+            "content",
+            isDark ? "#0B1220" : "#F8FAFC"
+          );
+        } catch {
+          // Use the application's default theme.
+        }
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+
+    <script
+      type="module"
+      src="/src/main.tsx"
+    ></script>
+  </body>
+</html>
